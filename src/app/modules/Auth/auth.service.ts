@@ -9,14 +9,18 @@ import config from '../../config'
 import { signUpValidationSchema } from '../User/user.validation'
 import { mailSender } from '../../utils/mailSender'
 import AuthUtils from './auth.utils'
+import ms from 'ms'
 const refreshTokensDB: string[] = []
+
 function generateAccessToken(user: any) {
-    return jwt.sign(user, config.access_token_secret, { expiresIn: '15m' })
+    return jwt.sign(user, config.access_token_secret, {
+        expiresIn: config.access_token_expires_in as any,
+    })
 }
 
 function generateRefreshToken(user: any) {
     const token = jwt.sign(user, config.refresh_token_secret, {
-        expiresIn: '7d',
+        expiresIn: config.refresh_token_expires_in as any,
     })
     refreshTokensDB.push(token)
     return token
@@ -96,16 +100,22 @@ const signin = async (payload: { email: string; password: string }) => {
     })
     const refreshToken = generateRefreshToken({
         id: user.id,
-        email: user.email,
-        role: user.role,
     })
-
+    // calculate expiry timestamps
+    const accessTokenExpiresInMs = ms(
+        (config.access_token_expires_in as any) || '15m'
+    )
+    const refreshTokenExpiresInMs = ms(
+        (config.refresh_token_expires_in as any) || '7d'
+    )
     const responseData = {
         accessToken,
         refreshToken,
         userId: user.id,
         email: user.email,
+        role: user.role,
         name: `${user?.firstName} ${user?.lastName}`,
+        accessTokenExpiresAt: Date.now() + accessTokenExpiresInMs,
     }
     return responseData
 }
@@ -201,9 +211,7 @@ const resendOtp = async (email: string) => {
 //     })
 // })
 
-export async function refreshToken(payload: {
-    refreshToken?: string
-}): Promise<{ accessToken: string }> {
+export async function refreshToken(payload: { refreshToken?: string }) {
     const { refreshToken } = payload
 
     if (!refreshToken || !refreshTokensDB.includes(refreshToken)) {
@@ -212,10 +220,12 @@ export async function refreshToken(payload: {
 
     try {
         // Verify refresh token and extract user payload
-        const user = jwt.verify(refreshToken, config.refresh_token_secret) as {
+        const token = jwt.verify(refreshToken, config.refresh_token_secret) as {
             id: string
-            email: string
-            role: string
+        }
+        const user = await User.findOne({ id: token.id })
+        if (!user) {
+            throw new ApiError(httpStatus.BAD_REQUEST, 'user not found')
         }
 
         // Generate new access token
@@ -224,8 +234,19 @@ export async function refreshToken(payload: {
             email: user.email,
             role: user.role,
         })
-
-        return { accessToken }
+        // Generate new refresh token
+        const newRefreshToken = generateRefreshToken({
+            id: user.id,
+        })
+        // calculate expiry timestamps
+        const accessTokenExpiresInMs = ms(
+            (config.access_token_expires_in as any) || '15m'
+        )
+        return {
+            accessToken,
+            refreshToken: newRefreshToken,
+            accessTokenExpiresAt: Date.now() + accessTokenExpiresInMs,
+        }
     } catch (error) {
         throw new ApiError(httpStatus.UNAUTHORIZED, 'Invalid refresh token')
     }
