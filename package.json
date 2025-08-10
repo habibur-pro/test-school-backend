@@ -5,7 +5,7 @@
     "license": "MIT",
     "author": "habibur rahman",
     "scripts": {
-        "start": "node server.ts",
+        "start": "node build/app/server.js",
         "dev": "ts-node-dev --respawn --transpile-only ./src/app/server.ts",
         "build": "tsc",
         "lint": "eslint src/**/*.ts",
